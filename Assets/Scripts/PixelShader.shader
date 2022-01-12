@@ -29,6 +29,7 @@ Shader "PostProcessing/PixelShader"
      
             uniform sampler2D _CameraDepthTexture; 
             float4 _CameraPosition;
+            float4 _LightPos;
             sampler2D _MainTex;
             fixed PI;
             float _Scattering;
@@ -48,6 +49,8 @@ Shader "PostProcessing/PixelShader"
             {
                 float4 vertex : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                float3 worldPos : TEXCOORD1;
+
             };
 
             v2f vert (appdata v)
@@ -55,7 +58,7 @@ Shader "PostProcessing/PixelShader"
                 v2f o;
                 o.vertex = UnityObjectToClipPos(v.vertex);
                 o.uv = v.uv;
-
+                o.worldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
                 return o;
             }
             
@@ -78,8 +81,8 @@ Shader "PostProcessing/PixelShader"
                 // depth of ray hit
                 float depth = LinearEyeDepth(depthNonLinear) * length(forward);
                 
-                float3 rayOrigin = _CameraPosition;
-                float3 rayDir = normalize(forward);
+                float3 rayOrigin = input.worldPos; // CHANGED FROM CAM POS
+                float3 rayDir = normalize(input.worldPos - _CameraPosition);
                 float3 rayEnd = rayOrigin + rayDir * depth;
                 float3 rayVector = rayEnd - rayOrigin;
                 float rayLength = length(rayVector);
@@ -88,25 +91,30 @@ Shader "PostProcessing/PixelShader"
                 float3 step = rayDir * stepLength;
                 float3 currentPosition = rayOrigin;
                 float3 accumFog = 0.0f.xxx;
-                float4 worldInShadowCameraSpace;
+                float4 pointInLightSourceSpace;
 
                  for (int i = 0; i < _NumberOfSteps; i++)
                 {
                     currentPosition = rayOrigin + step * i;
-                    worldInShadowCameraSpace = mul(float4(currentPosition, 1.0f), _ShadowViewProjectionMatrix);
-                    //worldInShadowCameraSpace /= worldInShadowCameraSpace.w; //Is this necessary?
+                    pointInLightSourceSpace = mul(float4(currentPosition, 1.0f), _ShadowViewProjectionMatrix);
+                    pointInLightSourceSpace /= pointInLightSourceSpace.w; //Why is this necessary?
 
-                   if (worldInShadowCameraSpace.x > -1.0 || worldInShadowCameraSpace.x < 1.0 ||
-                       worldInShadowCameraSpace.y > -1.0 || worldInShadowCameraSpace.y < 1.0)
+                    pointInLightSourceSpace.x = ( pointInLightSourceSpace.x + 1) / 2; // FROM -1 - 1 TO 0 - 1
+                    pointInLightSourceSpace.y = ( pointInLightSourceSpace.y + 1) / 2; // FROM -1 - 1 TO 0 - 1
+
+                   if (pointInLightSourceSpace.x > 0 || pointInLightSourceSpace.x < 1.0 ||
+                       pointInLightSourceSpace.y > 0 || pointInLightSourceSpace.y < 1.0)
                        {
-                            float shadowMapDepthNonLinear = tex2D(_ShadowTex, worldInShadowCameraSpace.xy);
+                            float shadowMapDepthNonLinear = tex2D(_ShadowTex, pointInLightSourceSpace.xy);
                             float shadowMapDepth = LinearEyeDepth(shadowMapDepthNonLinear) * length(forward);
                             
-                            if (shadowMapDepth > worldInShadowCameraSpace.z)
+                            float offsetRayLight = distance(_LightPos,currentPosition);
+
+                            if (shadowMapDepth > offsetRayLight)
                             {
                              accumFog += 1;
                             // Temporarily disabled this for testing
-                            // accumFog += ComputeScattering(dot(rayDir, _LightDir)).xxx * _LightColor; 
+                             //accumFog += ComputeScattering(dot(rayDir, _LightDirection)).xxx * _LightColor; 
                             }
                        }
                   }

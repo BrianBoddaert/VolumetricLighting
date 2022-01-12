@@ -9,7 +9,7 @@ public class PixelShaderScript : MonoBehaviour
     public GameObject lightGameObj;
     public int textureSize = 512;
     public float shadowBias = 0.005f;
-
+    public Camera TEMPMAINCAMERA;
     private RenderTexture depthTarget;
 
     private void OnEnable()
@@ -52,6 +52,13 @@ public class PixelShaderScript : MonoBehaviour
         Shader.SetGlobalTexture("_ShadowTex", depthTarget);
         Shader.SetGlobalFloat("_ShadowBias", shadowBias);
         Shader.SetGlobalVector("_SunDirection", shadowCasterCam.transform.rotation.eulerAngles);
+        Shader.SetGlobalVector("_LightPos", shadowCasterCam.transform.position);
+        //TEMPMAINCAMERA.lookat
+        // Vector4 CAMPOS = new Vector4(TEMPMAINCAMERA.transform.position.x, TEMPMAINCAMERA.transform.position.y, TEMPMAINCAMERA.transform.position.z,1);
+        // var temp = viewProj * CAMPOS;
+
+        //Vector3 CAMPOS = viewProj.MultiplyPoint(TEMPMAINCAMERA.transform.position);
+        //Debug.Log(CAMPOS.ToString());
 
     }
 
