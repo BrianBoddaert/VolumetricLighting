@@ -6,9 +6,10 @@ Shader "PostProcessing/PixelShader"
     {
         _MainTex ("Texture", 2D) = "white" {}
         _Scattering ("Scattering", float) = 0.5
+        _Intensity ("_Intensity", float) = 1
         PI("Pi",float) = 3.14159265359
         _NumberOfSteps("_NumberOfSteps", int) = 100
-        SunColor("SunColor",Color) = (255,255,0,0)
+        _LightColor("_LightColor",Color) = (255,255,0,0)
     }
 
     SubShader
@@ -33,11 +34,22 @@ Shader "PostProcessing/PixelShader"
             sampler2D _MainTex;
             fixed PI;
             float _Scattering;
+            float _Intensity;
             float _NumberOfSteps;
             sampler2D _ShadowTex;
             float4x4 _ShadowViewProjectionMatrix;
             float3 _LightDirection;
             fixed4 _LightColor;
+
+            // Variables for finding the current pixel position
+            float4 _BL; // Bottom Left
+            float4 _TL;
+            float4 _TR;
+            float4 _BR;
+            float4 NormalLeft;
+            float4 NormalRight;
+            float4 NormalH;
+
 
             struct appdata
             {
@@ -62,27 +74,38 @@ Shader "PostProcessing/PixelShader"
                 return o;
             }
             
-            // Mie scaterring approximated with Henyey-Greenstein phase function.
-            float ComputeScattering(float lightDotView)
+            // Mie scattering phase function.
+            float HenyeyGreenstein(float angle)
             {
-                float result = 1.0f - _Scattering * _Scattering;
-                result /= (4.0f * PI * pow(1.0f + _Scattering * _Scattering - (2.0f * _Scattering) * lightDotView, 1.5f));
-                return result;
+                // Formula from GPU Pro 5
+                return ((1.0f -  _Scattering) * (1.0f -  _Scattering)) / (4.0f * PI * pow(1.0f + (_Scattering * _Scattering) - (2.0f * _Scattering) * angle, 1.5f ) );
+            }
+
+            // Rayleigh scattering phase function.
+            float Rayleigh(float angle)
+            {
+                return (3 * (1 + (angle * angle))) / (16 * PI);   
             }
 
             fixed4 frag (v2f input) : SV_Target
             {
+                // Getting the position of the pixel.
+                NormalLeft = lerp(_BL, _TL,input.uv.y);
+                NormalRight = lerp(_BR, _TR, input.uv.y);
+                NormalH = lerp(NormalLeft, NormalRight,input.uv.x);
+                NormalH = normalize(NormalH);
+
                 // sample depth texture
                 float depthNonLinear = tex2D(_CameraDepthTexture, input.uv);
 
                 // forward vector of player's camera
                 float3 forward = mul((float3x3)unity_CameraToWorld, float3(0,0,1));
                 
-                // depth of ray hit
+                // depth of current pixel
                 float depth = LinearEyeDepth(depthNonLinear) * length(forward);
                 
-                float3 rayOrigin = input.worldPos; // CHANGED FROM CAM POS
-                float3 rayDir = normalize(input.worldPos - _CameraPosition);
+                float3 rayOrigin = _CameraPosition;
+                float3 rayDir = NormalH;
                 float3 rayEnd = rayOrigin + rayDir * depth;
                 float3 rayVector = rayEnd - rayOrigin;
                 float rayLength = length(rayVector);
@@ -90,38 +113,40 @@ Shader "PostProcessing/PixelShader"
                 float stepLength = rayLength / _NumberOfSteps;
                 float3 step = rayDir * stepLength;
                 float3 currentPosition = rayOrigin;
-                float3 accumFog = 0.0f.xxx;
-                float4 pointInLightSourceSpace;
+                float accumFog = 0;
 
                  for (int i = 0; i < _NumberOfSteps; i++)
                 {
                     currentPosition = rayOrigin + step * i;
-                    pointInLightSourceSpace = mul(float4(currentPosition, 1.0f), _ShadowViewProjectionMatrix);
-                    pointInLightSourceSpace /= pointInLightSourceSpace.w; //Why is this necessary?
+                    float4 samplePointFromLightsPerspective = mul(_ShadowViewProjectionMatrix,float4(currentPosition, 1.0f));
 
-                    pointInLightSourceSpace.x = ( pointInLightSourceSpace.x + 1) / 2; // FROM -1 - 1 TO 0 - 1
-                    pointInLightSourceSpace.y = ( pointInLightSourceSpace.y + 1) / 2; // FROM -1 - 1 TO 0 - 1
+                    // Clip space to screen space perspective divide and from -1 - 1 TO 0 - 1
+                    float2 uv = samplePointFromLightsPerspective / samplePointFromLightsPerspective.w * 0.5f + 0.5f;
 
-                   if (pointInLightSourceSpace.x > 0 || pointInLightSourceSpace.x < 1.0 ||
-                       pointInLightSourceSpace.y > 0 || pointInLightSourceSpace.y < 1.0)
+                   if (uv.x > 0 && uv.x < 1.0 &&
+                       uv.y > 0 && uv.y < 1.0)
                        {
-                            float shadowMapDepthNonLinear = tex2D(_ShadowTex, pointInLightSourceSpace.xy);
-                            float shadowMapDepth = LinearEyeDepth(shadowMapDepthNonLinear) * length(forward);
+                            float shadowMapDepthNonLinear = tex2D(_ShadowTex, uv);
+                            float shadowMapDepth = LinearEyeDepth(shadowMapDepthNonLinear);
                             
                             float offsetRayLight = distance(_LightPos,currentPosition);
 
                             if (shadowMapDepth > offsetRayLight)
                             {
-                             accumFog += 1;
-                            // Temporarily disabled this for testing
-                             //accumFog += ComputeScattering(dot(rayDir, _LightDirection)).xxx * _LightColor; 
+                            // - 90
+                               accumFog += Rayleigh(dot(rayDir, _LightDirection)); 
+                               //accumFog += HenyeyGreenstein(dot(rayDir, _LightDirection)); 
                             }
                        }
-                  }
 
+                  }
+         
                 accumFog /= _NumberOfSteps;
-                
-                return float4(accumFog,1);
+                accumFog = clamp(accumFog,0,255);
+                accumFog *= _Intensity;
+               
+                //return accumFog;
+                return tex2D(_MainTex,input.uv) + accumFog * _LightColor;
             }
             ENDCG
         }

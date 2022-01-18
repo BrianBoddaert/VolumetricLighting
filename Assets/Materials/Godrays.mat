@@ -75,12 +75,13 @@ Material:
     - _GlossMapScale: 1
     - _Glossiness: 0.5
     - _GlossyReflections: 1
+    - _Intensity: 10
     - _Metallic: 0
     - _Mode: 0
     - _NumberOfSteps: 100
     - _OcclusionStrength: 1
     - _Parallax: 0.02
-    - _Scattering: 20
+    - _Scattering: -0.1
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
@@ -91,5 +92,6 @@ Material:
     - SunColor: {r: 255, g: 255, b: 0, a: 0}
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
+    - _LightColor: {r: 0.3679245, g: 0.30287153, b: 0.22387859, a: 0}
     - g_CameraPosition: {r: 1, g: 1, b: 1, a: 1}
   m_BuildTextureStacks: []
