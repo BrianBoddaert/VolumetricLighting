@@ -5,11 +5,9 @@ Shader "PostProcessing/PixelShader"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
-        _Scattering ("Scattering", float) = 0.5
-        _Intensity ("_Intensity", float) = 1
+        _Scattering ("Scattering", float) = 0
         PI("Pi",float) = 3.14159265359
-        _NumberOfSteps("_NumberOfSteps", int) = 100
-        _LightColor("_LightColor",Color) = (255,255,0,0)
+        _SampleAmount("_SampleAmount", int) = 100
     }
 
     SubShader
@@ -34,22 +32,19 @@ Shader "PostProcessing/PixelShader"
             sampler2D _MainTex;
             fixed PI;
             float _Scattering;
-            float _Intensity;
-            float _NumberOfSteps;
+            float _SampleAmount;
             sampler2D _ShadowTex;
             float4x4 _ShadowViewProjectionMatrix;
             float3 _LightDirection;
-            fixed4 _LightColor;
+            float3 _PhotonMapSize;
 
-            // Variables for finding the current pixel position
-            float4 _BL; // Bottom Left
-            float4 _TL;
-            float4 _TR;
-            float4 _BR;
-            float4 NormalLeft;
-            float4 NormalRight;
-            float4 NormalH;
+			float4x4 _MainCamToWorld;
+			float4x4 _MainCamInverseProjection;
 
+            float4x4 _ShadowCamToWorld;
+			float4x4 _ShadowCamInverseProjection;
+
+            float4x4 _DitherPattern;
 
             struct appdata
             {
@@ -77,7 +72,6 @@ Shader "PostProcessing/PixelShader"
             // Mie scattering phase function.
             float HenyeyGreenstein(float angle)
             {
-                // Formula from GPU Pro 5
                 return ((1.0f -  _Scattering) * (1.0f -  _Scattering)) / (4.0f * PI * pow(1.0f + (_Scattering * _Scattering) - (2.0f * _Scattering) * angle, 1.5f ) );
             }
 
@@ -87,66 +81,84 @@ Shader "PostProcessing/PixelShader"
                 return (3 * (1 + (angle * angle))) / (16 * PI);   
             }
 
+            float3 GetWorldPos(float2 uv)
+            {
+				float depth = SAMPLE_DEPTH_TEXTURE(_CameraDepthTexture, UnityStereoTransformScreenSpaceTex(uv));
+                // from -1 - 1 TO 0 - 1
+				float2 uvClip = uv * 2.0 - 1.0;
+				float4 clipPos = float4(uvClip, depth, 1.0);
+				float4 viewPos = mul(_MainCamInverseProjection, clipPos);
+                // perspective divide  
+				viewPos /= viewPos.w;
+				float3 worldPos = mul(_MainCamToWorld, viewPos).xyz;
+
+                return worldPos;
+            }
+            float3 GetShadowWorldPos(float2 uv)
+            {
+				float depth = SAMPLE_DEPTH_TEXTURE(_ShadowTex, UnityStereoTransformScreenSpaceTex(uv)); 
+                // from -1 - 1 TO 0 - 1
+				float2 uvClip = uv * 2.0 - 1.0;
+				float4 clipPos = float4(uvClip, depth, 1.0);
+				float4 viewPos = mul(_ShadowCamInverseProjection, clipPos); 
+                // perspective divide  
+				viewPos /= viewPos.w; 
+				float3 worldPos = mul(_ShadowCamToWorld, viewPos).xyz;
+
+                return worldPos;
+            }
+
             fixed4 frag (v2f input) : SV_Target
             {
-                // Getting the position of the pixel.
-                NormalLeft = lerp(_BL, _TL,input.uv.y);
-                NormalRight = lerp(_BR, _TR, input.uv.y);
-                NormalH = lerp(NormalLeft, NormalRight,input.uv.x);
-                NormalH = normalize(NormalH);
-
-                // sample depth texture
-                float depthNonLinear = tex2D(_CameraDepthTexture, input.uv);
-
-                // forward vector of player's camera
-                float3 forward = mul((float3x3)unity_CameraToWorld, float3(0,0,1));
-                
-                // depth of current pixel
-                float depth = LinearEyeDepth(depthNonLinear) * length(forward);
                 
                 float3 rayOrigin = _CameraPosition;
-                float3 rayDir = NormalH;
-                float3 rayEnd = rayOrigin + rayDir * depth;
-                float3 rayVector = rayEnd - rayOrigin;
-                float rayLength = length(rayVector);
-                
-                float stepLength = rayLength / _NumberOfSteps;
-                float3 step = rayDir * stepLength;
-                float3 currentPosition = rayOrigin;
-                float accumFog = 0;
+                float3 rayEnd = GetWorldPos(input.uv);
 
-                 for (int i = 0; i < _NumberOfSteps; i++)
+                float3 ray = rayEnd - rayOrigin;
+                float3 rayDir = normalize(ray); 
+                float rayLength = length(ray);
+                
+                float stepLength = rayLength / _SampleAmount;
+                float3 step = rayDir * stepLength;
+
+                float3 currentPosition = rayOrigin;
+
+                float radiance = 0;
+              
+                float firstIntersectionDepth = -1.0f;
+
+                 /*Chowder pattern */
+                 float ditherValue = _DitherPattern[(input.uv.x * _PhotonMapSize.x) % 4][(input.uv.y * _PhotonMapSize.y) % 4];
+
+                for (int i = 0; i < _SampleAmount; i++)
                 {
-                    currentPosition = rayOrigin + step * i;
                     float4 samplePointFromLightsPerspective = mul(_ShadowViewProjectionMatrix,float4(currentPosition, 1.0f));
 
                     // Clip space to screen space perspective divide and from -1 - 1 TO 0 - 1
                     float2 uv = samplePointFromLightsPerspective / samplePointFromLightsPerspective.w * 0.5f + 0.5f;
+                    
+                    float shadowMapDepth = LinearEyeDepth(tex2D(_ShadowTex, uv).r);
+                       
+                    float offsetRayLight = distance(_LightPos,currentPosition);
+                    float offsetShadowMapDataLight = distance(_LightPos,GetShadowWorldPos(uv));
 
-                   if (uv.x > 0 && uv.x < 1.0 &&
-                       uv.y > 0 && uv.y < 1.0)
+                    if (offsetShadowMapDataLight > offsetRayLight)
+                    {
+                    
+                       radiance += HenyeyGreenstein(dot(rayDir, _LightDirection)); 
+                       if (firstIntersectionDepth == -1)
                        {
-                            float shadowMapDepthNonLinear = tex2D(_ShadowTex, uv);
-                            float shadowMapDepth = LinearEyeDepth(shadowMapDepthNonLinear);
-                            
-                            float offsetRayLight = distance(_LightPos,currentPosition);
-
-                            if (shadowMapDepth > offsetRayLight)
-                            {
-                            // - 90
-                               accumFog += Rayleigh(dot(rayDir, _LightDirection)); 
-                               //accumFog += HenyeyGreenstein(dot(rayDir, _LightDirection)); 
-                            }
+                            firstIntersectionDepth = abs(_CameraPosition - currentPosition);
                        }
+                     }
+                       //currentPosition += step;
+                       currentPosition += step * ditherValue;
+                       
+                }
+                
+                radiance /= _SampleAmount;
 
-                  }
-         
-                accumFog /= _NumberOfSteps;
-                accumFog = clamp(accumFog,0,255);
-                accumFog *= _Intensity;
-               
-                //return accumFog;
-                return tex2D(_MainTex,input.uv) + accumFog * _LightColor;
+                return float4(radiance,firstIntersectionDepth,0,0);
             }
             ENDCG
         }

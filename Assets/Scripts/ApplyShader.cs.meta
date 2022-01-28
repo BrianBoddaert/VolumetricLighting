@@ -3,7 +3,10 @@ guid: 01bfb22f1cbcd4b47b2b8fcc50507162
 MonoImporter:
   externalObjects: {}
   serializedVersion: 2
-  defaultReferences: []
+  defaultReferences:
+  - volumetricLightingShader: {fileID: 2100000, guid: 88dd5b77d034bf0419a225771b4cdb2a, type: 2}
+  - combineTextureWithOriginalColor: {fileID: 2100000, guid: 421dceadee6c3b34eb84f46f5a61bc66, type: 2}
+  - mainCam: {instanceID: 0}
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 

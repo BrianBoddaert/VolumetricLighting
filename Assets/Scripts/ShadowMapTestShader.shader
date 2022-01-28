@@ -37,11 +37,6 @@ Shader "PostProcessing/ShadowMapTestShader"
             float3 _LightDirection;
             fixed4 _LightColor;
 
-
-
-            // TEMP v
-
-
             float4 _BL;
             float4 _TL;
             float4 _TR;
@@ -51,9 +46,6 @@ Shader "PostProcessing/ShadowMapTestShader"
             float4 NormalRight;
             float4 NormalH;
 
-
-
-            // TEMP ^
             struct appdata
             {
                 float4 vertex : POSITION;
